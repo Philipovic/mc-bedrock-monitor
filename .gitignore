@@ -1,0 +1,16 @@
+.env
+data/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env.local
+.DS_Store
+
+# Docker
+*.log
+*.pid
+docker-compose.yml

@@ -1,0 +1,12 @@
+services:
+  mc-monitor-server:
+    build: .
+    container_name: mc-bedrock-monitor
+    environment:
+      - MC_SERVER=play.yourserver.com:19132
+      - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/XXXXXXXX/YYYYYYYYYYYYYYYY
+      - CHECK_INTERVAL=70
+      - DATA_FILE=/app/data/server_data.json
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
