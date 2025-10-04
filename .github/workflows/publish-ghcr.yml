@@ -34,5 +34,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/mc-bedrock-monitor:latest
-            ghcr.io/${{ github.repository_owner }}/mc-bedrock-monitor:${{ github.sha }}
+            ghcr.io/${{ toLower(github.repository_owner) }}/mc-bedrock-monitor:latest
+            ghcr.io/${{ toLower(github.repository_owner) }}/mc-bedrock-monitor:${{ github.sha }}
