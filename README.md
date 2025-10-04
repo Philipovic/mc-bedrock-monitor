@@ -1,65 +1,63 @@
-# mc_bedrock_monitor
+# Minecraft Bedrock Server Status Monitor (Discord notifications)
 
-A small monitor for a **Minecraft Bedrock server** that checks server status and player counts periodically and sends notifications to a Discord channel via webhook.
+A lightweight and small monitor for a **Minecraft Bedrock server** that checks the server status and player counts periodically and sends notifications to a Discord channel via webhook.
 
-What it does
-- Periodically queries the mcsrvstat Bedrock API for a configured server.
-- Detects server ONLINE/OFFLINE transitions and notifies Discord
-- Detects gamemode changes and notifies when the server is online.
-- Detects player join/leave events (player count changes)
-- Persists last-known state (online count, server status, gamemode) 
+What it does:
+- Periodically queries the [Minecraft Server Status API](https://mcsrvstat.us/) for a configured bedrock server.
+- Detects server ONLINE/OFFLINE transitions
+- Detects gamemode changes
+- Detects player join/leave events (only player count changes)
 
-Key configuration (environment variables)
-- `MC_SERVER` (required): host[:port] of the Bedrock server to monitor (example: `play.example.com:19132`). The script exits if this is not set.
+Key configuration (environment variables):
+- `MC_SERVER` (required): host[:port] of the Bedrock server to monitor (example: `play.example.com:19132`).
 - `DISCORD_WEBHOOK_URL` (optional): Discord webhook URL to post notifications. If not set, notifications are skipped and messages are printed only to stdout.
-- `CHECK_INTERVAL` (optional): seconds between checks (default: `60`).
+- `CHECK_INTERVAL` (optional): seconds between checks (default: `300`). Keep in mind that the API is currently free to use and consider donating to keep it online.
 - `DATA_FILE` (optional): path inside the container where state is stored (default: `/app/server_data.json` or the value passed in compose). Use a volume to persist it across restarts.
 
-Example outputs
+Example outputs:
 - Server went online:
-	- stdout: `✅ The server is now ONLINE! (Version: 1.19.x)`
-	- Discord message: `✅ The server is now ONLINE! (Version: 1.19.x)`
+    - `✅ The server is now ONLINE! (Version: 1.19.x)`
 - Server went offline:
-	- stdout/Discord: `❌ The server is now OFFLINE.`
+    - `❌ The server is now OFFLINE.`
 - Gamemode changed (while online):
-	- `ℹ️ Gamemode changed to: survival`
+    - `ℹ️ Gamemode changed to: survival`
 - Player joined/left (while online):
-	- `🎮 A player joined! 3/10 players online.`
-	- `👋 A player left. 1/10 players online.`
+    - `🎮 A player joined! 3/10 players online.`
+    - `👋 A player left. 1/10 players online.`
 
-Run with Docker Compose (recommended)
-1. Make sure `docker-compose.yml` is configured (it contains placeholders) and create a local override `docker-compose.local.yml` with your real values (do not commit that file). Example:
+## Run with Docker Compose (recommended)
 
-```bash
-cp docker-compose.local.yml.example docker-compose.local.yml
-# edit docker-compose.local.yml to add your MC_SERVER and DISCORD_WEBHOOK_URL
-```
+See the `example.docker-compose.yml` for reference.  
 
-2. Start the container (build + detach):
+## Run container directly
+
+Pull and run the published image with all required settings inline:
 
 ```bash
-docker compose -f docker-compose.yml up -d --build
+docker pull ghcr.io/philipovic/mc-bedrock-monitor:latest
 ```
 
-3. Follow logs:
+Run the container (adjust environment variables as needed):
+```bash
+docker run -d \
+  --name mc-bedrock-monitor \
+  -e MC_SERVER=play.example.com:19132 \
+  -e DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..." \
+  -e CHECK_INTERVAL=300 \
+  -e DATA_FILE=/app/data/server_data.json \
+  -v mc_data:/app/data \
+  ghcr.io/philipovic/mc-bedrock-monitor:latest
+```
+
+View logs of the running container
 
 ```bash
-docker compose -f docker-compose.yml logs -f
+docker logs -f mc-bedrock-monitor
 ```
-
-4. Stop:
+## Stop and remove the container
 
 ```bash
-docker compose -f docker-compose.yml down
+docker stop mc-bedrock-monitor
+docker rm mc-bedrock-monitor
 ```
 
-Or run directly with docker (one-off)
-
-```bash
-docker build -t mc-bedrock-monitor .
-docker run --env MC_SERVER=play.example.com:19132 \
-	--env DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/.." \
-	--rm -v mc_data:/app/data mc-bedrock-monitor
-```
-
-- The data file stores last-known `online_count`, `server_status`, and `gamemode`. You can inspect or back it up from a named volume if needed.

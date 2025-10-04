@@ -16,7 +16,7 @@ if not MC_SERVER:
     sys.exit(1)
 
 API_URL = f"https://api.mcsrvstat.us/bedrock/3/{MC_SERVER}"
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))  # Default: 60 seconds
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "300"))  # Default: 5 minutes
 DATA_FILE = os.getenv("DATA_FILE", "server_data.json")  # Default file name
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
