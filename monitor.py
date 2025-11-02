@@ -77,7 +77,7 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
     try:
         # Add User-Agent header as required by the API
         headers = {
-            "User-Agent": "MC-Bedrock-Monitor (https://github.com/Philipovic/mc-bedrock-monitor)"
+            "User-Agent": "MC-Server-Discord-Monitor (https://github.com/Philipovic/mc-bedrock-monitor)"
         }
         response = requests.get(API_URL, headers=headers).json()
         
@@ -86,17 +86,38 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
         max_players = response.get("players", {}).get("max", 0)
         current_version = response.get("version", "Unknown")
         
-        # Gamemode is only available for Bedrock servers
-        gamemode = response.get("gamemode", "").strip() if SERVER_TYPE == "BEDROCK" else ""
+        # Handle server-type specific information
+        if SERVER_TYPE == "BEDROCK":
+            gamemode = response.get("gamemode", "").strip()
+            server_info = f"Version: {current_version}"
+        else:  # JAVA
+            gamemode = ""  # Java servers don't report gamemode
+            software = response.get("software", "")
+            motd = response.get("motd", {}).get("clean", [""])[0]
+            plugins = response.get("plugins", [])
+            mods = response.get("mods", [])
+            
+            # Build server info string
+            server_info = f"Version: {current_version}"
+            if software:
+                server_info += f" ({software})"
+            if plugins:
+                plugin_count = len(plugins)
+                server_info += f" | {plugin_count} plugin{'s' if plugin_count != 1 else ''}"
+            if mods:
+                mod_count = len(mods)
+                server_info += f" | {mod_count} mod{'s' if mod_count != 1 else ''}"
 
         # Notify if the server status changes or it's the first check
         if server_online != previous_server_status or previous_server_status is None:
             if server_online:
-                message = f"✅ The server is now ONLINE! (Version: {current_version})"
+                message = f"✅ The server is now ONLINE!\n{server_info}"
+                if motd:
+                    message += f"\n📝 {motd}"
                 print(message)
                 send_discord_notification(message)
             else:
-                message = "❌ The server is now OFFLINE."
+                message = f"❌ The server is now OFFLINE."
                 print(message)
                 send_discord_notification(message)
         
@@ -106,8 +127,8 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
             print(message)
             send_discord_notification(message)
 
-        # Notify if the gamemode changes (only when server is online)
-        if server_online and gamemode != previous_gamemode:
+        # Notify if the gamemode changes (only for Bedrock servers and when server is online)
+        if SERVER_TYPE == "BEDROCK" and server_online and gamemode != previous_gamemode:
             message = f"ℹ️ Gamemode changed to: {gamemode}"
             print(message)
             send_discord_notification(message)
@@ -115,9 +136,17 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
         # Notify if the player count changes (only if server is online)
         if server_online and online_count != previous_online_count:
             if online_count > previous_online_count:
-                message = f"🎮 A player joined! {online_count}/{max_players} players online."
+                message = f"🎮 A player joined! {online_count}/{max_players} players online"
+                
+                # Add player list for Java servers when available
+                if SERVER_TYPE == "JAVA" and "list" in response.get("players", {}):
+                    player_list = response["players"]["list"]
+                    if player_list:
+                        newest_player = player_list[-1]["name"]  # Get the last player in the list
+                        message += f"\n👋 Welcome, {newest_player}!"
             elif online_count < previous_online_count:
-                message = f"👋 A player left. {online_count}/{max_players} players online."
+                message = f"👋 A player left. {online_count}/{max_players} players online"
+            
             print(message)
             send_discord_notification(message)
 
@@ -135,7 +164,7 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
         )
     except Exception as e:
         print(f"Error while checking server: {e}")
-        return previous_online_count, previous_server_status, previous_gamemode
+        return previous_online_count, previous_server_status, previous_gamemode, previous_version
 
 if __name__ == "__main__":
     print(f"Starting Minecraft {SERVER_TYPE} Server Monitor...")

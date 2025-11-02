@@ -1,31 +1,55 @@
-# Minecraft Bedrock Server Status Monitor (Discord notifications)
+# Minecraft Server Status - Discord Monitor
 
-A lightweight and small monitor for a **Minecraft Bedrock server** that checks the server status and player counts periodically and sends notifications to a Discord channel via webhook.
+A lightweight and small monitor for **Minecraft servers** (both Java and Bedrock) that checks the server status and player counts periodically and sends notifications to a Discord channel via webhook.
 
 What it does:
-- Periodically queries the [Minecraft Server Status API](https://mcsrvstat.us/) for a configured bedrock server.
+- Periodically queries the [Minecraft Server Status API](https://mcsrvstat.us/) for the configured server
 - Detects server ONLINE/OFFLINE transitions
-- Detects gamemode changes
-- Detects player join/leave events (only player count changes)
+- Monitors server version changes
+- Detects player join/leave events
+- For Bedrock servers:
+  - Detects gamemode changes
+  - Shows player count updates
+- For Java servers:
+  - Shows player names when they join
+  - Displays server software and MOTD
+  - Reports plugin and mod counts
 
-Key configuration (environment variables):
-- `SERVER_TYPE` (optional): set to `BEDROCK` for Bedrock servers. (If not set, defaults to BEDROCK)
-- `MC_SERVER` (required): host[:port] of the Bedrock server to monitor (example: `play.example.com:19132`).
-- `DISCORD_WEBHOOK_URL` (optional): Discord webhook URL to post notifications. If not set, notifications are skipped and messages are printed only to stdout.
-- `CHECK_INTERVAL` (optional): seconds between checks (default: `300`). Keep in mind that the API is currently free to use and consider donating to keep it online.
+### Key configuration (environment variables):
+- `SERVER_TYPE` (optional): set to `JAVA` or `BEDROCK`. If not set, defaults to `BEDROCK`
+- `MC_SERVER` (required): host[:port] of the server to monitor
+  - For Bedrock servers: `play.example.com:19132`
+  - For Java servers: `play.example.com:25565` (25565 is default Java port)
+- `DISCORD_WEBHOOK_URL` (optional): Discord webhook URL to post notifications. If not set, notifications are skipped and messages are printed only to stdout
+- `CHECK_INTERVAL` (optional): seconds between checks (default: `300`). Keep in mind that the API is currently free to use and consider donating to keep it online
 
-Example outputs:
-- Server went online:
-    - `✅ The server is now ONLINE! (Version: 1.21.2)`
-- Server went offline:
+### Example outputs:
+
+Common notifications:
+- Server status changes:
+    - `✅ The server is now ONLINE!`
     - `❌ The server is now OFFLINE.`
-- Gamemode changed (while online):
-    - `ℹ️ Gamemode changed to: Survival`
-- Player joined/left (while online):
-    - `🎮 A player joined! 3/10 players online.`
-    - `👋 A player left. 1/10 players online.`
-- Server updates its version (while online):
+- Version updates:
     - `🔄 Server version changed: 1.21.1 → 1.21.2`
+
+Bedrock server notifications:
+- Server startup:
+    - `✅ The server is now ONLINE!`
+    - `Version: 1.21.2`
+- Gamemode changes:
+    - `ℹ️ Gamemode changed to: Survival`
+- Player count updates:
+    - `🎮 A player joined! 3/10 players online`
+    - `👋 A player left. 2/10 players online`
+
+Java server notifications:
+- Server startup with plugins/mods:
+    - `✅ The server is now ONLINE!`
+    - `Version: 1.20.1 (Paper) | 15 plugins | 3 mods`
+    - `📝 Message of the Day: A Minecraft Server`
+- Player joins with name:
+    - `🎮 A player joined! 1/20 players online`
+    - `👋 Welcome, Notch!`
 
 ## Run with Docker Compose (recommended)
 
@@ -41,13 +65,24 @@ docker pull ghcr.io/philipovic/mc-bedrock-monitor:latest
 
 Run the container (adjust environment variables as needed):
 ```bash
+# For Bedrock servers (default)
 docker run -d \
-  --name mc-bedrock-monitor \
-  -e SERVER_TYPE=BEDROCK \
+  --name mc-monitor \
   -e MC_SERVER=play.example.com:19132 \
   -e DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..." \
   -e CHECK_INTERVAL=300 \
-  -v mc_data:/app/data \
+  -v mc_monitor_data:/app/data \
+  ghcr.io/philipovic/mc-bedrock-monitor:latest
+```
+```bash
+# For Java servers
+docker run -d \
+  --name mc-monitor \
+  -e SERVER_TYPE=JAVA \
+  -e MC_SERVER=play.example.com:25565 \
+  -e DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..." \
+  -e CHECK_INTERVAL=300 \
+  -v mc_monitor_data:/app/data \
   ghcr.io/philipovic/mc-bedrock-monitor:latest
 ```
 
