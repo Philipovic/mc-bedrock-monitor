@@ -3,10 +3,10 @@ services:
     image: ghcr.io/philipovic/mc-bedrock-monitor:latest
     container_name: mc-bedrock-monitor
     environment:
-      - MC_SERVER=play.yourserver.com:19132
+      - SERVER_TYPE=BEDROCK # Specify server type JAVA or BEDROCK (default)
+      - MC_SERVER=play.yourserver.com:19132 # Server address:port
       - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/XXXXXXXX/YYYYYYYYYYYYYYYY
       - CHECK_INTERVAL=120
-      - DATA_FILE=/app/data/server_data.json
     volumes:
       - mc_data:/app/data
     restart: unless-stopped
