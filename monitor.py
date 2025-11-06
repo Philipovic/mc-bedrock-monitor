@@ -1,11 +1,11 @@
 import os
 import sys
+import requests
 import time
 import json
 from discord_webhook import DiscordWebhook
 
 # Create a persistent session for connection pooling
-import requests
 session = requests.Session()
 
 # Configuration from environment variables
@@ -86,7 +86,10 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
             "User-Agent": "MC-Server-Discord-Monitor (https://github.com/Philipovic/mc-bedrock-monitor)"
         }
         response = session.get(API_URL, headers=headers, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            raise Exception(f"API request failed with status {response.status_code}: {e}")
         data = response.json()
         
         server_online = data.get("online", False)
