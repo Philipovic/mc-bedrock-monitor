@@ -1,9 +1,12 @@
 import os
 import sys
-import requests
 import time
 import json
 from discord_webhook import DiscordWebhook
+
+# Create a persistent session for connection pooling
+import requests
+session = requests.Session()
 
 # Configuration from environment variables
 MC_SERVER = os.getenv("MC_SERVER")
@@ -28,6 +31,7 @@ API_URL = f"{API_BASE_URL}/{'bedrock/' if SERVER_TYPE == 'BEDROCK' else ''}{API_
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "300"))  # Default: 5 minutes
 DATA_FILE = "/app/data/server_data.json"  # Fixed path for data storage
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
+REQUEST_TIMEOUT = 10  # Timeout for API requests in seconds
 
 def load_previous_data():
     """Load previous server and player data from a file."""
@@ -48,6 +52,8 @@ def load_previous_data():
 
 def save_current_data(online_count, server_status, gamemode, version):
     """Save current server and player data to a file."""
+    # Create data directory if it doesn't exist
+    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     with open(DATA_FILE, "w") as f:
         json.dump({
             "online_count": online_count,
@@ -79,82 +85,98 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
         headers = {
             "User-Agent": "MC-Server-Discord-Monitor (https://github.com/Philipovic/mc-bedrock-monitor)"
         }
-        response = requests.get(API_URL, headers=headers).json()
+        response = session.get(API_URL, headers=headers, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        data = response.json()
         
-        server_online = response.get("online", False)
-        online_count = response.get("players", {}).get("online", 0)
-        max_players = response.get("players", {}).get("max", 0)
-        current_version = response.get("version", "Unknown")
+        server_online = data.get("online", False)
+        online_count = data.get("players", {}).get("online", 0)
+        max_players = data.get("players", {}).get("max", 0)
+        current_version = data.get("version", "Unknown")
         
         # Handle server-type specific information
+        motd = ""  # Initialize motd for all server types
         if SERVER_TYPE == "BEDROCK":
-            gamemode = response.get("gamemode", "").strip()
+            gamemode = data.get("gamemode", "").strip()
             server_info = f"Version: {current_version}"
         else:  # JAVA
             gamemode = ""  # Java servers don't report gamemode
-            software = response.get("software", "")
-            motd = response.get("motd", {}).get("clean", [""])[0]
-            plugins = response.get("plugins", [])
-            mods = response.get("mods", [])
+            software = data.get("software", "")
+            motd = data.get("motd", {}).get("clean", [""])[0]
+            plugins = data.get("plugins", [])
+            mods = data.get("mods", [])
             
-            # Build server info string
-            server_info = f"Version: {current_version}"
+            # Build server info string using list for efficient concatenation
+            info_parts = [f"Version: {current_version}"]
             if software:
-                server_info += f" ({software})"
+                info_parts.append(f"({software})")
             if plugins:
                 plugin_count = len(plugins)
-                server_info += f" | {plugin_count} plugin{'s' if plugin_count != 1 else ''}"
+                info_parts.append(f"{plugin_count} plugin{'s' if plugin_count != 1 else ''}")
             if mods:
                 mod_count = len(mods)
-                server_info += f" | {mod_count} mod{'s' if mod_count != 1 else ''}"
+                info_parts.append(f"{mod_count} mod{'s' if mod_count != 1 else ''}")
+            
+            server_info = " | ".join(info_parts)
 
+        # Track if we need to save data
+        data_changed = False
+        
         # Notify if the server status changes or it's the first check
         if server_online != previous_server_status or previous_server_status is None:
+            data_changed = True
             if server_online:
-                message = f"✅ The server is now ONLINE!\n{server_info}"
+                message_parts = [f"✅ The server is now ONLINE!", server_info]
                 if motd:
-                    message += f"\n📝 {motd}"
+                    message_parts.append(f"📝 {motd}")
+                message = "\n".join(message_parts)
                 print(message)
                 send_discord_notification(message)
             else:
-                message = f"❌ The server is now OFFLINE."
+                message = "❌ The server is now OFFLINE."
                 print(message)
                 send_discord_notification(message)
         
         # Notify if server version changes while online
         elif server_online and current_version != previous_version and current_version != "Unknown":
+            data_changed = True
             message = f"🔄 Server version changed: {previous_version} → {current_version}"
             print(message)
             send_discord_notification(message)
 
         # Notify if the gamemode changes (only for Bedrock servers and when server is online)
         if SERVER_TYPE == "BEDROCK" and server_online and gamemode != previous_gamemode:
+            data_changed = True
             message = f"ℹ️ Gamemode changed to: {gamemode}"
             print(message)
             send_discord_notification(message)
 
         # Notify if the player count changes (only if server is online)
         if server_online and online_count != previous_online_count:
+            data_changed = True
             if online_count > previous_online_count:
-                message = f"🎮 A player joined! {online_count}/{max_players} players online"
+                message_parts = [f"🎮 A player joined! {online_count}/{max_players} players online"]
                 
                 # Add player list for Java servers when available
-                if SERVER_TYPE == "JAVA" and "list" in response.get("players", {}):
-                    player_list = response["players"]["list"]
+                if SERVER_TYPE == "JAVA" and "list" in data.get("players", {}):
+                    player_list = data["players"]["list"]
                     if player_list:
                         newest_player = player_list[-1]["name"]  # Get the last player in the list
-                        message += f"\n👋 Welcome, {newest_player}!"
+                        message_parts.append(f"👋 Welcome, {newest_player}!")
+                
+                message = "\n".join(message_parts)
             elif online_count < previous_online_count:
                 message = f"👋 A player left. {online_count}/{max_players} players online"
             
             print(message)
             send_discord_notification(message)
 
-        # Save the updated server status, player count, gamemode and version
-        if server_online:  # Save gamemode and current version only if the server is online
-            save_current_data(online_count, server_online, gamemode, current_version)
-        else:
-            save_current_data(online_count, server_online, previous_gamemode, previous_version)
+        # Save the updated server status, player count, gamemode and version only if data changed
+        if data_changed:
+            if server_online:  # Save gamemode and current version only if the server is online
+                save_current_data(online_count, server_online, gamemode, current_version)
+            else:
+                save_current_data(online_count, server_online, previous_gamemode, previous_version)
 
         return (
             online_count,
