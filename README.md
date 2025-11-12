@@ -39,17 +39,24 @@ Bedrock server notifications:
 - Gamemode changes:
     - `ℹ️ Gamemode changed to: Survival`
 - Player count updates:
-    - `🎮 A player joined! 3/10 players online`
-    - `👋 A player left. 2/10 players online`
+    - `🎮 A player joined!`
+    - `📊 3/10 players online`
+- Multiple players:
+    - `🎮 3 players joined!`
+    - `📊 5/10 players online`
 
 Java server notifications:
 - Server startup with plugins/mods:
     - `✅ The server is now ONLINE!`
     - `Version: 1.20.1 (Paper) | 15 plugins | 3 mods`
     - `📝 Message of the Day: A Minecraft Server`
-- Player joins with name:
-    - `🎮 A player joined! 1/20 players online`
-    - `👋 Welcome, Notch!`
+- Player joins with names:
+    - `🎮 Notch joined!`
+    - `🎮 Steve joined!`
+    - `📊 2/20 players online`
+- Player leaves:
+    - `👋 Notch left.`
+    - `📊 1/20 players online`
 
 ## Run with Docker Compose (recommended)
 

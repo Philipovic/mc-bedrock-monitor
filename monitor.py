@@ -43,25 +43,31 @@ def load_previous_data():
                 data.get("server_status", None),
                 data.get("gamemode", ""),
                 data.get("server_type", SERVER_TYPE),
-                data.get("version", "Unknown")
+                data.get("version", "Unknown"),
+                set(data.get("player_names", []))  # Load player names as a set
             )
     except FileNotFoundError:
-        return 0, None, "", SERVER_TYPE, "Unknown"  # Default values with current server type
+        return 0, None, "", SERVER_TYPE, "Unknown", set()  # Default values with current server type
     except json.JSONDecodeError:
-        return 0, None, "", SERVER_TYPE, "Unknown"  # Default values with current server type
+        return 0, None, "", SERVER_TYPE, "Unknown", set()  # Default values with current server type
 
-def save_current_data(online_count, server_status, gamemode, version):
+def save_current_data(online_count, server_status, gamemode, version, player_names=None):
     """Save current server and player data to a file."""
     # Create data directory if it doesn't exist
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+    data_to_save = {
+        "online_count": online_count,
+        "server_status": server_status,
+        "gamemode": gamemode,
+        "server_type": SERVER_TYPE,
+        "version": version
+    }
+    # Save player names if provided (convert set to list for JSON serialization)
+    if player_names is not None:
+        data_to_save["player_names"] = list(player_names)
+    
     with open(DATA_FILE, "w") as f:
-        json.dump({
-            "online_count": online_count,
-            "server_status": server_status,
-            "gamemode": gamemode,
-            "server_type": SERVER_TYPE,
-            "version": version
-        }, f)
+        json.dump(data_to_save, f)
 
 def send_discord_notification(message):
     """Send a notification to Discord using a webhook."""
@@ -78,7 +84,7 @@ def send_discord_notification(message):
     except Exception as e:
         print(f"Error sending Discord notification: {e}")
 
-def check_server(previous_online_count, previous_server_status, previous_gamemode, previous_version):
+def check_server(previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names):
     """Check the Minecraft server for status, player count, and server info."""
     try:
         # Add User-Agent header as required by the API
@@ -97,17 +103,27 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
         max_players = data.get("players", {}).get("max", 0)
         current_version = data.get("version", "Unknown")
         
+        # Initialize variables that may be used later
+        motd = ""
+        gamemode = ""
+        current_player_names = set()
+        
         # Handle server-type specific information
-        motd = ""  # Initialize motd for all server types
         if SERVER_TYPE == "BEDROCK":
             gamemode = data.get("gamemode", "").strip()
             server_info = f"Version: {current_version}"
+            # Bedrock API doesn't provide individual player names
         else:  # JAVA
-            gamemode = ""  # Java servers don't report gamemode
+            # Java servers don't report gamemode, but do have MOTD
             software = data.get("software", "")
-            motd = data.get("motd", {}).get("clean", [""])[0]
+            motd = data.get("motd", {}).get("clean", [""])[0] if data.get("motd") else ""
             plugins = data.get("plugins", [])
             mods = data.get("mods", [])
+            
+            # Get current player names for Java servers
+            if "list" in data.get("players", {}):
+                player_list = data["players"]["list"]
+                current_player_names = set(player["name"] for player in player_list)
             
             # Build server info string using list for efficient concatenation
             info_parts = [f"Version: {current_version}"]
@@ -154,42 +170,72 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
             print(message)
             send_discord_notification(message)
 
-        # Notify if the player count changes (only if server is online)
-        if server_online and online_count != previous_online_count:
-            data_changed = True
-            if online_count > previous_online_count:
-                message_parts = [f"🎮 A player joined! {online_count}/{max_players} players online"]
+        # Handle player join/leave events
+        if server_online:
+            if SERVER_TYPE == "JAVA" and current_player_names:
+                # For Java servers, we can track individual players
+                joined_players = current_player_names - previous_player_names
+                left_players = previous_player_names - current_player_names
                 
-                # Add player list for Java servers when available
-                if SERVER_TYPE == "JAVA" and "list" in data.get("players", {}):
-                    player_list = data["players"]["list"]
-                    if player_list:
-                        newest_player = player_list[-1]["name"]  # Get the last player in the list
-                        message_parts.append(f"👋 Welcome, {newest_player}!")
+                # Build message parts for joins and leaves
+                message_parts = []
                 
-                message = "\n".join(message_parts)
-            elif online_count < previous_online_count:
-                message = f"👋 A player left. {online_count}/{max_players} players online"
-            
-            print(message)
-            send_discord_notification(message)
+                # Add join notifications
+                if joined_players:
+                    data_changed = True
+                    for player_name in sorted(joined_players):  # Sort for consistent ordering
+                        message_parts.append(f"🎮 {player_name} joined!")
+                
+                # Add leave notifications
+                if left_players:
+                    data_changed = True
+                    for player_name in sorted(left_players):  # Sort for consistent ordering
+                        message_parts.append(f"👋 {player_name} left.")
+                
+                # Add player count once at the end if there were any changes
+                if message_parts:
+                    message_parts.append(f"📊 {online_count}/{max_players} players online")
+                    message = "\n".join(message_parts)
+                    print(message)
+                    send_discord_notification(message)
+                    
+            elif online_count != previous_online_count:
+                # For Bedrock servers or when player names aren't available, fall back to count-based detection
+                data_changed = True
+                player_diff = online_count - previous_online_count
+                
+                if player_diff > 0:
+                    if player_diff == 1:
+                        message = f"🎮 A player joined!\n📊 {online_count}/{max_players} players online"
+                    else:
+                        message = f"🎮 {player_diff} players joined!\n📊 {online_count}/{max_players} players online"
+                else:  # player_diff < 0
+                    player_diff = abs(player_diff)
+                    if player_diff == 1:
+                        message = f"👋 A player left.\n📊 {online_count}/{max_players} players online"
+                    else:
+                        message = f"👋 {player_diff} players left.\n📊 {online_count}/{max_players} players online"
+                
+                print(message)
+                send_discord_notification(message)
 
-        # Save the updated server status, player count, gamemode and version only if data changed
+        # Save the updated server status, player count, gamemode, version and player names only if data changed
         if data_changed:
-            if server_online:  # Save gamemode and current version only if the server is online
-                save_current_data(online_count, server_online, gamemode, current_version)
+            if server_online:  # Save gamemode, current version and player names only if the server is online
+                save_current_data(online_count, server_online, gamemode, current_version, current_player_names)
             else:
-                save_current_data(online_count, server_online, previous_gamemode, previous_version)
+                save_current_data(online_count, server_online, previous_gamemode, previous_version, set())
 
         return (
             online_count,
             server_online,
             gamemode if server_online else previous_gamemode,
-            current_version if server_online else previous_version
+            current_version if server_online else previous_version,
+            current_player_names if server_online else set()
         )
     except Exception as e:
         print(f"Error while checking server: {e}")
-        return previous_online_count, previous_server_status, previous_gamemode, previous_version
+        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
 
 if __name__ == "__main__":
     print(f"Starting Minecraft {SERVER_TYPE} Server Monitor...")
@@ -197,14 +243,14 @@ if __name__ == "__main__":
     print(f"Check interval: {CHECK_INTERVAL} seconds")
     
     # Load the last known server and player data
-    previous_online_count, previous_server_status, previous_gamemode, stored_server_type, previous_version = load_previous_data()
+    previous_online_count, previous_server_status, previous_gamemode, stored_server_type, previous_version, previous_player_names = load_previous_data()
     
     # Warn if server type has changed since last run
     if stored_server_type and stored_server_type != SERVER_TYPE:
         print(f"Warning: Server type has changed from {stored_server_type} to {SERVER_TYPE}")
 
     while True:
-        previous_online_count, previous_server_status, previous_gamemode, previous_version = check_server(
-            previous_online_count, previous_server_status, previous_gamemode, previous_version
+        previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names = check_server(
+            previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
         )
         time.sleep(CHECK_INTERVAL)
