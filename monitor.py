@@ -165,7 +165,25 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
     if server_online != previous_server_status or previous_server_status is None:
         data_changed = True
         if server_online:
-            message_parts = [f"✅ The server is now ONLINE!", server_info]
+            # Format version in parentheses on the same line as ONLINE message
+            version_str = f" ({current_version})" if current_version and current_version != "Unknown" else ""
+            message_parts = [f"✅ The server is now ONLINE!{version_str}"]
+            # Add additional server info (software, plugins, mods) for Java servers
+            if SERVER_TYPE == "JAVA":
+                extra_info = []
+                software = data.get("software", "")
+                plugins = data.get("plugins", [])
+                mods = data.get("mods", [])
+                if software:
+                    extra_info.append(software)
+                if plugins:
+                    plugin_count = len(plugins)
+                    extra_info.append(f"{plugin_count} plugin{'s' if plugin_count != 1 else ''}")
+                if mods:
+                    mod_count = len(mods)
+                    extra_info.append(f"{mod_count} mod{'s' if mod_count != 1 else ''}")
+                if extra_info:
+                    message_parts.append(" | ".join(extra_info))
             if motd:
                 message_parts.append(f"📝 {motd}")
             message = "\n".join(message_parts)
@@ -192,7 +210,7 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
 
     # Handle player join/leave events
     if server_online:
-        if SERVER_TYPE == "JAVA" and current_player_names:
+        if SERVER_TYPE == "JAVA" and (current_player_names or previous_player_names):
             # For Java servers, we can track individual players
             joined_players = current_player_names - previous_player_names
             left_players = previous_player_names - current_player_names
