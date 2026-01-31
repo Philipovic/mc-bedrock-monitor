@@ -106,7 +106,8 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
         return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
     except requests.exceptions.HTTPError as e:
         # Server returned an error status code
-        print(f"API error (HTTP {response.status_code}): {e}")
+        status_code = e.response.status_code if e.response is not None else "unknown"
+        print(f"API error (HTTP {status_code}): {e}")
         return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
     except requests.exceptions.RequestException as e:
         # Any other request-related error
