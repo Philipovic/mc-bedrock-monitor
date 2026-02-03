@@ -90,6 +90,9 @@ def send_discord_notification(message):
 def check_server(previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, consecutive_offline_checks):
     """Check the Minecraft server for status, player count, and server info."""
     
+    # Store the initial value to detect if it changes
+    previous_consecutive_offline_checks = consecutive_offline_checks
+    
     try:
         # Add User-Agent header as required by the API
         headers = {
@@ -176,7 +179,16 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
     
     # Determine the effective server status for notifications
     # When server appears offline but hasn't reached threshold, keep previous status
-    effective_server_status = server_online if server_online else (False if is_truly_offline else previous_server_status)
+    if server_online:
+        effective_server_status = True
+    elif is_truly_offline:
+        effective_server_status = False
+    else:
+        # Server appears offline but waiting for confirmation - keep previous status
+        effective_server_status = previous_server_status
+    
+    # Track if offline check count changed
+    offline_check_count_changed = (consecutive_offline_checks != previous_consecutive_offline_checks)
     
     # Notify if the server status changes or it's the first check
     # Only notify about offline status if we've confirmed it with multiple checks
@@ -211,8 +223,8 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
             message = "❌ The server is now OFFLINE."
             print(message)
             send_discord_notification(message)
-    elif not server_online and consecutive_offline_checks < OFFLINE_THRESHOLD:
-        # Log when we detect potential offline state but waiting for confirmation
+    elif not server_online and consecutive_offline_checks == 1:
+        # Log only when we first detect potential offline state (count just changed to 1)
         print(f"⚠️  Server appears offline (check {consecutive_offline_checks}/{OFFLINE_THRESHOLD}). Waiting for confirmation...")
     
     # Notify if server version changes while online
@@ -279,8 +291,8 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
             send_discord_notification(message)
 
     # Save the updated server status, player count, gamemode, version and player names
-    # Always save to persist consecutive_offline_checks counter
-    if data_changed or consecutive_offline_checks > 0:
+    # Save when data changed OR when offline check counter changed
+    if data_changed or offline_check_count_changed:
         if server_online:  # Save gamemode, current version and player names only if the server is online
             save_current_data(online_count, effective_server_status, gamemode, current_version, current_player_names, consecutive_offline_checks)
         else:
