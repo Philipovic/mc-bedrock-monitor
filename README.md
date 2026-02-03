@@ -15,6 +15,16 @@ What it does:
   - Displays server software and MOTD
   - Reports plugin and mod counts
 
+### Resilience and API failure handling:
+- **No false alerts**: When the API or Internet connection fails, the monitor preserves the current state without triggering any notifications
+- **State preservation**: All server state (online/offline status, player counts, versions, etc.) remains unchanged during network outages
+- **Automatic recovery**: When the API becomes available again, normal monitoring resumes and state changes are detected properly
+- **Supported failure scenarios**:
+  - Network connectivity issues (DNS failures, connection timeouts)
+  - API server downtime (HTTP 5xx errors)
+  - Invalid API responses (malformed JSON)
+  - Request timeouts
+
 ### Key configuration (environment variables):
 - `SERVER_TYPE` (optional): set to `JAVA` or `BEDROCK`. If not set, defaults to `BEDROCK`
 - `MC_SERVER` (required): host[:port] of the server to monitor
@@ -104,4 +114,25 @@ docker logs -f mc-bedrock-monitor
 docker stop mc-bedrock-monitor
 docker rm mc-bedrock-monitor
 ```
+
+## Development and Testing
+
+### Running tests
+
+The project includes a comprehensive test suite that validates the API failure handling behavior. To run the tests:
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the test suite
+MC_SERVER=test.example.com:19132 python -m unittest test_monitor -v
+```
+
+The test suite validates:
+- State preservation during various API failures (timeouts, connection errors, HTTP errors)
+- No Discord notifications are sent during API outages
+- Data persistence is not affected by API failures
+- Proper recovery when the API becomes available again
+
 
