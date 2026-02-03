@@ -22,7 +22,6 @@ What it does:
   - For Java servers: `play.example.com:25565` (25565 is default Java port)
 - `DISCORD_WEBHOOK_URL` (optional): Discord webhook URL to post notifications. If not set, notifications are skipped and messages are printed only to stdout
 - `CHECK_INTERVAL` (optional): seconds between checks (default: `300`). Keep in mind that the API is currently free to use and consider donating to keep it online
-- `OFFLINE_THRESHOLD` (optional): number of consecutive offline checks required before marking server as offline (default: `2`). This prevents false offline notifications due to transient network issues or API timeouts
 
 ### Example outputs:
 
