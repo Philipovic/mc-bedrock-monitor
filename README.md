@@ -25,6 +25,10 @@ What it does:
   - Invalid API responses (malformed JSON)
   - Request timeouts
 
+### Logging:
+- **Timestamped stdout logs**: All console output includes timestamps in `[YYYY-MM-DD HH:MM:SS]` format for easy troubleshooting
+- **Clean Discord notifications**: Discord messages do not include timestamps, keeping notifications clean and readable
+
 ### Key configuration (environment variables):
 - `SERVER_TYPE` (optional): set to `JAVA` or `BEDROCK`. If not set, defaults to `BEDROCK`
 - `MC_SERVER` (required): host[:port] of the server to monitor
@@ -108,6 +112,19 @@ View logs of the running container
 ```bash
 docker logs -f mc-bedrock-monitor
 ```
+
+Example log output with timestamps:
+```
+[2026-02-07 12:30:15] Starting Minecraft BEDROCK Server Monitor...
+[2026-02-07 12:30:15] Monitoring server: play.example.com:19132
+[2026-02-07 12:30:15] Check interval: 300 seconds
+[2026-02-07 12:30:16] ✅ The server is now ONLINE! (1.21.2)
+[2026-02-07 12:30:16] Notification sent to Discord.
+[2026-02-07 12:35:20] 🎮 A player joined!
+📊 1/10 players online
+[2026-02-07 12:35:20] Notification sent to Discord.
+```
+
 ## Stop and remove the container
 
 ```bash
@@ -134,5 +151,16 @@ The test suite validates:
 - No Discord notifications are sent during API outages
 - Data persistence is not affected by API failures
 - Proper recovery when the API becomes available again
+- Timestamp logging functionality (stdout has timestamps, Discord notifications don't)
+
+### Running the timestamp demo
+
+To see how timestamp logging works:
+
+```bash
+python demo_timestamps.py
+```
+
+This demonstrates that all stdout logs include timestamps while Discord notifications remain clean.
 
 
