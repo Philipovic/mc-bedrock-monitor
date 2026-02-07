@@ -3,10 +3,16 @@ import sys
 import requests
 import time
 import json
+from datetime import datetime
 from discord_webhook import DiscordWebhook
 
 # Create a persistent session for connection pooling
 session = requests.Session()
+
+def log(message):
+    """Print a message to stdout with a timestamp prefix."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}")
 
 # Configuration from environment variables
 MC_SERVER = os.getenv("MC_SERVER")
@@ -15,13 +21,13 @@ SERVER_TYPE = os.getenv("SERVER_TYPE", "BEDROCK").upper()  # Default to BEDROCK,
 if not MC_SERVER:
     # Fail fast if the required MC_SERVER variable isn't provided. This avoids
     # accidentally shipping a hardcoded third-party server in your repository.
-    print("Error: environment variable MC_SERVER is not set.\n" \
+    log("Error: environment variable MC_SERVER is not set.\n" \
           "Please set MC_SERVER (for example: play.example.com:19132) " \
           "in your environment or .env file.")
     sys.exit(1)
 
 if SERVER_TYPE not in ["BEDROCK", "JAVA"]:
-    print("Error: SERVER_TYPE must be either 'BEDROCK' or 'JAVA'")
+    log("Error: SERVER_TYPE must be either 'BEDROCK' or 'JAVA'")
     sys.exit(1)
 
 # API Configuration
@@ -72,17 +78,17 @@ def save_current_data(online_count, server_status, gamemode, version, player_nam
 def send_discord_notification(message):
     """Send a notification to Discord using a webhook."""
     if not DISCORD_WEBHOOK_URL:
-        print("Discord Webhook URL not set. Skipping notification.")
+        log("Discord Webhook URL not set. Skipping notification.")
         return
     try:
         webhook = DiscordWebhook(url=DISCORD_WEBHOOK_URL, content=message)
         response = webhook.execute()
         if response.status_code == 200:
-            print("Notification sent to Discord.")
+            log("Notification sent to Discord.")
         else:
-            print(f"Failed to send Discord notification. Status code: {response.status_code}")
+            log(f"Failed to send Discord notification. Status code: {response.status_code}")
     except Exception as e:
-        print(f"Error sending Discord notification: {e}")
+        log(f"Error sending Discord notification: {e}")
 
 def check_server(previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names):
     """Check the Minecraft server for status, player count, and server info."""
@@ -98,24 +104,24 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
         
     except requests.exceptions.ConnectionError as e:
         # Network is down, DNS failure, or API server unreachable
-        print(f"API unreachable (connection error): {e}")
+        log(f"API unreachable (connection error): {e}")
         return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
     except requests.exceptions.Timeout as e:
         # Request timed out
-        print(f"API unreachable (timeout): {e}")
+        log(f"API unreachable (timeout): {e}")
         return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
     except requests.exceptions.HTTPError as e:
         # Server returned an error status code
         status_code = e.response.status_code if e.response is not None else "unknown"
-        print(f"API error (HTTP {status_code}): {e}")
+        log(f"API error (HTTP {status_code}): {e}")
         return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
     except requests.exceptions.RequestException as e:
         # Any other request-related error
-        print(f"API unreachable (request error): {e}")
+        log(f"API unreachable (request error): {e}")
         return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
     except json.JSONDecodeError as e:
         # Invalid JSON response from API
-        print(f"API returned invalid JSON: {e}")
+        log(f"API returned invalid JSON: {e}")
         return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
     
     server_online = data.get("online", False)
@@ -187,25 +193,25 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
             if motd:
                 message_parts.append(f"📝 {motd}")
             message = "\n".join(message_parts)
-            print(message)
+            log(message)
             send_discord_notification(message)
         else:
             message = "❌ The server is now OFFLINE."
-            print(message)
+            log(message)
             send_discord_notification(message)
     
     # Notify if server version changes while online
     elif server_online and current_version != previous_version and current_version != "Unknown":
         data_changed = True
         message = f"🔄 Server version changed: {previous_version} → {current_version}"
-        print(message)
+        log(message)
         send_discord_notification(message)
 
     # Notify if the gamemode changes (only for Bedrock servers and when server is online)
     if SERVER_TYPE == "BEDROCK" and server_online and gamemode != previous_gamemode:
         data_changed = True
         message = f"ℹ️ Gamemode changed to: {gamemode}"
-        print(message)
+        log(message)
         send_discord_notification(message)
 
     # Handle player join/leave events
@@ -234,7 +240,7 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
             if message_parts:
                 message_parts.append(f"📊 {online_count}/{max_players} players online")
                 message = "\n".join(message_parts)
-                print(message)
+                log(message)
                 send_discord_notification(message)
                 
         elif online_count != previous_online_count:
@@ -254,7 +260,7 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
                 else:
                     message = f"👋 {player_diff} players left.\n📊 {online_count}/{max_players} players online"
             
-            print(message)
+            log(message)
             send_discord_notification(message)
 
     # Save the updated server status, player count, gamemode, version and player names only if data changed
@@ -273,16 +279,16 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
     )
 
 if __name__ == "__main__":
-    print(f"Starting Minecraft {SERVER_TYPE} Server Monitor...")
-    print(f"Monitoring server: {MC_SERVER}")
-    print(f"Check interval: {CHECK_INTERVAL} seconds")
+    log(f"Starting Minecraft {SERVER_TYPE} Server Monitor...")
+    log(f"Monitoring server: {MC_SERVER}")
+    log(f"Check interval: {CHECK_INTERVAL} seconds")
     
     # Load the last known server and player data
     previous_online_count, previous_server_status, previous_gamemode, stored_server_type, previous_version, previous_player_names = load_previous_data()
     
     # Warn if server type has changed since last run
     if stored_server_type and stored_server_type != SERVER_TYPE:
-        print(f"Warning: Server type has changed from {stored_server_type} to {SERVER_TYPE}")
+        log(f"Warning: Server type has changed from {stored_server_type} to {SERVER_TYPE}")
 
     while True:
         previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names = check_server(
