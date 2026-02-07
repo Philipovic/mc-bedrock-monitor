@@ -5,9 +5,130 @@ import json
 import os
 import tempfile
 import sys
+import re
+from io import StringIO
 
 # Import the monitor module
 import monitor
+
+
+class TestTimestampLogging(unittest.TestCase):
+    """Test that timestamps are added to stdout logging but not to Discord notifications."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        # Create a temporary file for data storage
+        self.temp_fd, self.temp_path = tempfile.mkstemp(suffix='.json')
+        
+        # Patch the DATA_FILE path
+        self.data_file_patcher = patch.object(monitor, 'DATA_FILE', self.temp_path)
+        self.data_file_patcher.start()
+        
+        # Mock Discord webhook to prevent actual notifications
+        self.discord_patcher = patch('monitor.send_discord_notification')
+        self.mock_discord = self.discord_patcher.start()
+        
+    def tearDown(self):
+        """Clean up test fixtures."""
+        self.discord_patcher.stop()
+        self.data_file_patcher.stop()
+        os.close(self.temp_fd)
+        os.unlink(self.temp_path)
+    
+    def test_log_function_adds_timestamp(self):
+        """Test that the log function adds a timestamp to messages."""
+        # Capture stdout
+        with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
+            monitor.log("Test message")
+            output = mock_stdout.getvalue()
+            
+            # Check that output has timestamp format [YYYY-MM-DD HH:MM:SS]
+            timestamp_pattern = r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] Test message\n$'
+            self.assertRegex(output, timestamp_pattern)
+    
+    @patch('monitor.session')
+    def test_server_status_log_has_timestamp(self, mock_session):
+        """Test that server status messages to stdout have timestamps."""
+        # Mock successful API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "online": True,
+            "players": {"online": 2, "max": 10},
+            "version": "1.21.0",
+            "gamemode": "Survival"
+        }
+        mock_session.get.return_value = mock_response
+        
+        # Capture stdout
+        with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
+            # Call check_server with None status (first check)
+            monitor.check_server(0, None, "", "Unknown", set())
+            
+            output = mock_stdout.getvalue()
+            
+            # Check that output has timestamp format
+            timestamp_pattern = r'\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]'
+            self.assertRegex(output, timestamp_pattern)
+            
+            # Check that the actual message is in the output
+            self.assertIn("The server is now ONLINE!", output)
+    
+    @patch('monitor.session')
+    def test_discord_notification_no_timestamp(self, mock_session):
+        """Test that Discord notifications don't include timestamps."""
+        # Mock successful API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "online": True,
+            "players": {"online": 2, "max": 10},
+            "version": "1.21.0",
+            "gamemode": "Survival"
+        }
+        mock_session.get.return_value = mock_response
+        
+        # Reset the discord mock to actually capture the message
+        self.mock_discord.reset_mock()
+        
+        # Call check_server with None status (first check)
+        monitor.check_server(0, None, "", "Unknown", set())
+        
+        # Verify Discord notification was called at least once
+        self.assertTrue(self.mock_discord.called)
+        
+        # Check all Discord messages don't contain timestamps
+        timestamp_pattern = r'\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]'
+        for call_args in self.mock_discord.call_args_list:
+            discord_message = call_args[0][0]
+            
+            # Check that the Discord message does NOT contain a timestamp
+            self.assertNotRegex(discord_message, timestamp_pattern,
+                               f"Discord message should not contain timestamp: {discord_message}")
+            
+            # Check that the message is not empty
+            self.assertTrue(len(discord_message) > 0)
+    
+    @patch('monitor.session')
+    def test_api_error_log_has_timestamp(self, mock_session):
+        """Test that API error messages to stdout have timestamps."""
+        # Simulate a connection error
+        mock_session.get.side_effect = requests.exceptions.ConnectionError("Network unreachable")
+        
+        # Capture stdout
+        with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
+            monitor.check_server(5, True, "Survival", "1.21.0", set())
+            
+            output = mock_stdout.getvalue()
+            
+            # Check that output has timestamp format
+            timestamp_pattern = r'\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]'
+            self.assertRegex(output, timestamp_pattern)
+            
+            # Check that the actual error message is in the output
+            self.assertIn("API unreachable (connection error)", output)
 
 
 class TestAPIFailureHandling(unittest.TestCase):
