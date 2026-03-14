@@ -711,7 +711,6 @@ class TestDynamicOfflineConfirmation(unittest.TestCase):
     def test_dynamic_calculation_various_intervals(self):
         """Test the dynamic formula for several CHECK_INTERVAL values."""
         import math
-        cache = monitor.API_CACHE_DURATION  # 120
         min_dur = monitor.MIN_OFFLINE_DURATION  # 360
         
         # (CHECK_INTERVAL, expected OFFLINE_CONFIRM_CHECKS)
