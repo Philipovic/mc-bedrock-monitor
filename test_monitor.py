@@ -489,5 +489,193 @@ class TestEdgeCases(unittest.TestCase):
         self.mock_discord.assert_not_called()
 
 
+class TestConsecutiveOfflineChecks(unittest.TestCase):
+    """Test that offline notifications require consecutive offline reports."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.temp_fd, self.temp_path = tempfile.mkstemp(suffix='.json')
+        self.data_file_patcher = patch.object(monitor, 'DATA_FILE', self.temp_path)
+        self.data_file_patcher.start()
+        self.discord_patcher = patch('monitor.send_discord_notification')
+        self.mock_discord = self.discord_patcher.start()
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        self.discord_patcher.stop()
+        self.data_file_patcher.stop()
+        os.close(self.temp_fd)
+        os.unlink(self.temp_path)
+    
+    def _make_offline_response(self, mock_session):
+        """Configure mock to return an offline server response."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "online": False,
+            "players": {"online": 0, "max": 10},
+            "version": "1.21.0",
+            "gamemode": "Survival"
+        }
+        mock_session.get.return_value = mock_response
+    
+    def _make_online_response(self, mock_session):
+        """Configure mock to return an online server response."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "online": True,
+            "players": {"online": 2, "max": 10},
+            "version": "1.21.0",
+            "gamemode": "Survival"
+        }
+        mock_session.get.return_value = mock_response
+    
+    @patch('monitor.session')
+    def test_first_offline_no_notification(self, mock_session):
+        """Test that a single offline report does NOT send a notification."""
+        self._make_offline_response(mock_session)
+        
+        result = monitor.check_server(5, True, "Survival", "1.21.0", set(), 0)
+        
+        # No offline notification should be sent
+        self.mock_discord.assert_not_called()
+        # Previous server status should be preserved (still True)
+        self.assertEqual(result[1], True)
+        # Offline check count should be 1
+        self.assertEqual(result[5], 1)
+    
+    @patch('monitor.session')
+    def test_second_consecutive_offline_sends_notification(self, mock_session):
+        """Test that two consecutive offline reports DO send a notification."""
+        self._make_offline_response(mock_session)
+        
+        # First offline check
+        result1 = monitor.check_server(5, True, "Survival", "1.21.0", set(), 0)
+        self.mock_discord.assert_not_called()
+        self.assertEqual(result1[5], 1)
+        
+        # Second offline check (pass the returned state)
+        result2 = monitor.check_server(
+            result1[0], result1[1], result1[2], result1[3], result1[4], result1[5]
+        )
+        
+        # NOW the notification should be sent
+        self.mock_discord.assert_called_once()
+        discord_message = self.mock_discord.call_args[0][0]
+        self.assertIn("OFFLINE", discord_message)
+        # Server status should now be False
+        self.assertEqual(result2[1], False)
+    
+    @patch('monitor.session')
+    def test_offline_then_online_no_notification(self, mock_session):
+        """Test that offline followed by online does NOT send any offline notification."""
+        # First check: offline
+        self._make_offline_response(mock_session)
+        result1 = monitor.check_server(0, True, "Survival", "1.21.0", set(), 0)
+        self.mock_discord.assert_not_called()
+        self.assertEqual(result1[1], True)  # Status preserved
+        self.assertEqual(result1[5], 1)     # Counter incremented
+        
+        # Second check: back online (same player count as previous to avoid player change notification)
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "online": True,
+            "players": {"online": 0, "max": 10},
+            "version": "1.21.0",
+            "gamemode": "Survival"
+        }
+        mock_session.get.return_value = mock_response
+        result2 = monitor.check_server(
+            result1[0], result1[1], result1[2], result1[3], result1[4], result1[5]
+        )
+        
+        # No offline notification should have been sent at any point
+        self.mock_discord.assert_not_called()
+        # Server status should still be True
+        self.assertEqual(result2[1], True)
+        # Counter should be reset
+        self.assertEqual(result2[5], 0)
+    
+    @patch('monitor.session')
+    def test_offline_counter_persisted_to_data_file(self, mock_session):
+        """Test that the offline check counter is saved to the data file."""
+        self._make_offline_response(mock_session)
+        
+        # First offline check
+        monitor.check_server(5, True, "Survival", "1.21.0", set(), 0)
+        
+        # Read the data file
+        with open(self.temp_path, 'r') as f:
+            data = json.load(f)
+        
+        self.assertEqual(data.get("offline_check_count"), 1)
+        # Server status should still be True (not confirmed offline)
+        self.assertEqual(data.get("server_status"), True)
+    
+    @patch('monitor.session')
+    def test_api_failure_preserves_offline_counter(self, mock_session):
+        """Test that API failures preserve the offline counter."""
+        # First offline check
+        self._make_offline_response(mock_session)
+        result1 = monitor.check_server(5, True, "Survival", "1.21.0", set(), 0)
+        self.assertEqual(result1[5], 1)
+        
+        # API failure
+        mock_session.get.side_effect = requests.exceptions.Timeout("Timeout")
+        result2 = monitor.check_server(
+            result1[0], result1[1], result1[2], result1[3], result1[4], result1[5]
+        )
+        
+        # Counter should be preserved
+        self.assertEqual(result2[5], 1)
+        # No notification should have been sent
+        self.mock_discord.assert_not_called()
+    
+    @patch('monitor.session')
+    def test_first_check_offline_no_notification(self, mock_session):
+        """Test that offline on the very first check (no previous state) does not notify."""
+        self._make_offline_response(mock_session)
+        
+        # First check ever (previous_server_status is None)
+        result = monitor.check_server(0, None, "", "Unknown", set(), 0)
+        
+        # Should not notify on first offline
+        self.mock_discord.assert_not_called()
+        # Status should remain None (not confirmed)
+        self.assertEqual(result[1], None)
+        self.assertEqual(result[5], 1)
+    
+    @patch('monitor.session')
+    def test_confirmed_offline_then_online_sends_online_notification(self, mock_session):
+        """Test that going online after confirmed offline sends online notification."""
+        self._make_offline_response(mock_session)
+        
+        # Two consecutive offline checks to confirm
+        result1 = monitor.check_server(5, True, "Survival", "1.21.0", set(), 0)
+        result2 = monitor.check_server(
+            result1[0], result1[1], result1[2], result1[3], result1[4], result1[5]
+        )
+        self.assertEqual(result2[1], False)  # Confirmed offline
+        self.mock_discord.reset_mock()
+        
+        # Now server comes back online
+        self._make_online_response(mock_session)
+        result3 = monitor.check_server(
+            result2[0], result2[1], result2[2], result2[3], result2[4], result2[5]
+        )
+        
+        # Should send online notification (may also send player join notification)
+        self.assertTrue(self.mock_discord.called)
+        first_call_message = self.mock_discord.call_args_list[0][0][0]
+        self.assertIn("ONLINE", first_call_message)
+        self.assertEqual(result3[1], True)
+        self.assertEqual(result3[5], 0)
+
+
 if __name__ == '__main__':
     unittest.main()
