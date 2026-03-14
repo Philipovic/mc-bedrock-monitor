@@ -213,7 +213,8 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
             else:
                 # Not yet confirmed offline, save counter and preserve previous status
                 save_current_data(previous_online_count, previous_server_status,
-                                  previous_gamemode, previous_version, None, offline_check_count)
+                                  previous_gamemode, previous_version,
+                                  previous_player_names, offline_check_count)
                 return (previous_online_count, previous_server_status, previous_gamemode,
                         previous_version, previous_player_names, offline_check_count)
     
