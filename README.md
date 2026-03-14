@@ -17,7 +17,7 @@ What it does:
 
 ### Resilience and API failure handling:
 - **No false alerts**: When the API or Internet connection fails, the monitor preserves the current state without triggering any notifications
-- **Consecutive offline confirmation**: Offline notifications require two consecutive offline reports from the API before alerting, preventing false-positive notifications from transient API responses. Because the API caches responses for 2 minutes, the `CHECK_INTERVAL` should be at least `120` seconds to ensure each check receives an independent response
+- **Consecutive offline confirmation**: Offline notifications require multiple consecutive offline reports from the API before alerting, preventing false-positive notifications from transient API responses. The number of required checks is automatically calculated based on `CHECK_INTERVAL` and the API cache duration (2 minutes) to ensure the confirmation window spans at least 2 full cache cycles plus a worst-case timing offset (~6 minutes total). All other state changes (online, player joins/leaves, version changes, gamemode) are notified immediately
 - **State preservation**: All server state (online/offline status, player counts, versions, etc.) remains unchanged during network outages
 - **Automatic recovery**: When the API becomes available again, normal monitoring resumes and state changes are detected properly
 - **Supported failure scenarios**:
@@ -36,7 +36,7 @@ What it does:
   - For Bedrock servers: `play.example.com:19132`
   - For Java servers: `play.example.com:25565` (25565 is default Java port)
 - `DISCORD_WEBHOOK_URL` (optional): Discord webhook URL to post notifications. If not set, notifications are skipped and messages are printed only to stdout
-- `CHECK_INTERVAL` (optional): seconds between checks (default: `300`). Must be at least `120` seconds because the API caches responses for 2 minutes — shorter intervals would return the same cached data and reduce the reliability of offline detection. Keep in mind that the API is currently free to use and consider donating to keep it online
+- `CHECK_INTERVAL` (optional): seconds between checks (default: `300`). The API caches responses for 2 minutes, so the number of consecutive offline checks needed before sending an offline notification is automatically adjusted based on this value. Keep in mind that the API is currently free to use and consider donating to keep it online
 
 ### Example outputs:
 

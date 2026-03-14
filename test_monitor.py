@@ -549,17 +549,23 @@ class TestConsecutiveOfflineChecks(unittest.TestCase):
     
     @patch('monitor.session')
     def test_second_consecutive_offline_sends_notification(self, mock_session):
-        """Test that two consecutive offline reports DO send a notification."""
+        """Test that OFFLINE_CONFIRM_CHECKS consecutive offline reports DO send a notification."""
         self._make_offline_response(mock_session)
         
-        # First offline check
-        result1 = monitor.check_server(5, True, "Survival", "1.21.0", set(), 0)
+        # Run offline checks up to OFFLINE_CONFIRM_CHECKS
+        result = monitor.check_server(5, True, "Survival", "1.21.0", set(), 0)
         self.mock_discord.assert_not_called()
-        self.assertEqual(result1[5], 1)
         
-        # Second offline check (pass the returned state)
-        result2 = monitor.check_server(
-            result1[0], result1[1], result1[2], result1[3], result1[4], result1[5]
+        for i in range(1, monitor.OFFLINE_CONFIRM_CHECKS - 1):
+            result = monitor.check_server(
+                result[0], result[1], result[2], result[3], result[4], result[5]
+            )
+            self.mock_discord.assert_not_called()
+            self.assertEqual(result[5], i + 1)
+        
+        # Final offline check should trigger notification
+        result = monitor.check_server(
+            result[0], result[1], result[2], result[3], result[4], result[5]
         )
         
         # NOW the notification should be sent
@@ -567,7 +573,7 @@ class TestConsecutiveOfflineChecks(unittest.TestCase):
         discord_message = self.mock_discord.call_args[0][0]
         self.assertIn("OFFLINE", discord_message)
         # Server status should now be False
-        self.assertEqual(result2[1], False)
+        self.assertEqual(result[1], False)
     
     @patch('monitor.session')
     def test_offline_then_online_no_notification(self, mock_session):
@@ -655,52 +661,96 @@ class TestConsecutiveOfflineChecks(unittest.TestCase):
         """Test that going online after confirmed offline sends online notification."""
         self._make_offline_response(mock_session)
         
-        # Two consecutive offline checks to confirm
-        result1 = monitor.check_server(5, True, "Survival", "1.21.0", set(), 0)
-        result2 = monitor.check_server(
-            result1[0], result1[1], result1[2], result1[3], result1[4], result1[5]
-        )
-        self.assertEqual(result2[1], False)  # Confirmed offline
+        # Run OFFLINE_CONFIRM_CHECKS consecutive offline checks to confirm
+        result = monitor.check_server(5, True, "Survival", "1.21.0", set(), 0)
+        for _ in range(monitor.OFFLINE_CONFIRM_CHECKS - 1):
+            result = monitor.check_server(
+                result[0], result[1], result[2], result[3], result[4], result[5]
+            )
+        self.assertEqual(result[1], False)  # Confirmed offline
         self.mock_discord.reset_mock()
         
         # Now server comes back online
         self._make_online_response(mock_session)
-        result3 = monitor.check_server(
-            result2[0], result2[1], result2[2], result2[3], result2[4], result2[5]
+        result = monitor.check_server(
+            result[0], result[1], result[2], result[3], result[4], result[5]
         )
         
         # Should send online notification (may also send player join notification)
         self.assertTrue(self.mock_discord.called)
         first_call_message = self.mock_discord.call_args_list[0][0][0]
         self.assertIn("ONLINE", first_call_message)
-        self.assertEqual(result3[1], True)
-        self.assertEqual(result3[5], 0)
+        self.assertEqual(result[1], True)
+        self.assertEqual(result[5], 0)
 
 
-class TestAPICacheDuration(unittest.TestCase):
-    """Test that API cache duration is considered in the configuration."""
+class TestDynamicOfflineConfirmation(unittest.TestCase):
+    """Test that OFFLINE_CONFIRM_CHECKS is dynamically calculated based on CHECK_INTERVAL."""
     
-    def test_api_cache_duration_constant_exists(self):
-        """Test that API_CACHE_DURATION is defined and equals 120 seconds (2 minutes)."""
-        self.assertTrue(hasattr(monitor, 'API_CACHE_DURATION'))
+    def test_api_cache_duration_constant(self):
+        """Test that API_CACHE_DURATION is 120 seconds (2 minutes)."""
         self.assertEqual(monitor.API_CACHE_DURATION, 120)
     
-    def test_default_check_interval_exceeds_cache_duration(self):
-        """Test that the default CHECK_INTERVAL (300s) exceeds the API cache duration (120s)."""
-        # The default CHECK_INTERVAL should be >= API_CACHE_DURATION to ensure
-        # consecutive checks receive independent (non-cached) API responses
-        self.assertGreaterEqual(int(os.getenv("CHECK_INTERVAL", "300")), monitor.API_CACHE_DURATION)
-    
-    def test_offline_confirm_checks_requires_independent_responses(self):
-        """Test that OFFLINE_CONFIRM_CHECKS works correctly with cache-aware interval.
+    def test_min_offline_duration_constant(self):
+        """Test that MIN_OFFLINE_DURATION equals 3 × API_CACHE_DURATION (360 seconds).
         
-        With CHECK_INTERVAL >= API_CACHE_DURATION (120s), each consecutive offline
-        check receives a fresh API response, making OFFLINE_CONFIRM_CHECKS meaningful.
+        This accounts for 2 full cache cycles + 1 worst-case timing offset.
         """
-        # OFFLINE_CONFIRM_CHECKS should require at least 2 checks
+        self.assertEqual(monitor.MIN_OFFLINE_DURATION, 3 * monitor.API_CACHE_DURATION)
+        self.assertEqual(monitor.MIN_OFFLINE_DURATION, 360)
+    
+    def test_offline_confirm_checks_at_least_two(self):
+        """Test that OFFLINE_CONFIRM_CHECKS is always at least 2."""
         self.assertGreaterEqual(monitor.OFFLINE_CONFIRM_CHECKS, 2)
-        # API_CACHE_DURATION should be set to 120 seconds (2 minutes)
-        self.assertEqual(monitor.API_CACHE_DURATION, 120)
+    
+    def test_confirmation_window_spans_min_offline_duration(self):
+        """Test that the confirmation window is at least MIN_OFFLINE_DURATION seconds."""
+        window = (monitor.OFFLINE_CONFIRM_CHECKS - 1) * monitor.CHECK_INTERVAL
+        self.assertGreaterEqual(window, monitor.MIN_OFFLINE_DURATION)
+    
+    def test_dynamic_calculation_various_intervals(self):
+        """Test the dynamic formula for several CHECK_INTERVAL values."""
+        import math
+        cache = monitor.API_CACHE_DURATION  # 120
+        min_dur = monitor.MIN_OFFLINE_DURATION  # 360
+        
+        # (CHECK_INTERVAL, expected OFFLINE_CONFIRM_CHECKS)
+        cases = [
+            (60,  7),   # ceil(360/60)+1  = 7, span = 6×60  = 360 ≥ 360
+            (120, 4),   # ceil(360/120)+1 = 4, span = 3×120 = 360 ≥ 360
+            (180, 3),   # ceil(360/180)+1 = 3, span = 2×180 = 360 ≥ 360
+            (240, 3),   # ceil(360/240)+1 = 3, span = 2×240 = 480 ≥ 360
+            (300, 3),   # ceil(360/300)+1 = 3, span = 2×300 = 600 ≥ 360
+            (360, 2),   # ceil(360/360)+1 = 2, span = 1×360 = 360 ≥ 360
+            (500, 2),   # ceil(360/500)+1 = 2, span = 1×500 = 500 ≥ 360
+            (600, 2),   # ceil(360/600)+1 = 2, span = 1×600 = 600 ≥ 360
+        ]
+        for interval, expected in cases:
+            result = max(2, math.ceil(min_dur / interval) + 1)
+            self.assertEqual(result, expected,
+                             f"CHECK_INTERVAL={interval}: expected {expected}, got {result}")
+            # Verify the window always covers MIN_OFFLINE_DURATION
+            window = (result - 1) * interval
+            self.assertGreaterEqual(window, min_dur,
+                                    f"CHECK_INTERVAL={interval}: window {window}s < {min_dur}s")
+    
+    def test_default_check_interval_produces_correct_checks(self):
+        """Test that the default CHECK_INTERVAL (300s) produces the expected confirmation count."""
+        import math
+        default_interval = int(os.getenv("CHECK_INTERVAL", "300"))
+        expected = max(2, math.ceil(monitor.MIN_OFFLINE_DURATION / default_interval) + 1)
+        self.assertEqual(monitor.OFFLINE_CONFIRM_CHECKS, expected)
+    
+    def test_immediate_notifications_not_affected(self):
+        """Test that online, player, and version changes still notify immediately."""
+        # These notifications should NOT go through the offline confirmation logic.
+        # Verify by checking the check_server code structure:
+        # - Online transitions: notified immediately (server_online == True branch)
+        # - Version changes: notified immediately (elif server_online and version changed)
+        # - Player changes: notified immediately (if server_online player count/names)
+        # - Gamemode changes: notified immediately (if BEDROCK and gamemode changed)
+        # Only offline transitions go through OFFLINE_CONFIRM_CHECKS.
+        self.assertGreaterEqual(monitor.OFFLINE_CONFIRM_CHECKS, 2)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
 import os
 import sys
+import math
 import requests
 import time
 import json
@@ -39,7 +40,17 @@ DATA_FILE = "/app/data/server_data.json"  # Fixed path for data storage
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 REQUEST_TIMEOUT = 10  # Timeout for API requests in seconds
 API_CACHE_DURATION = 120  # The mcsrvstat.us API caches responses for 2 minutes (120 seconds)
-OFFLINE_CONFIRM_CHECKS = 2  # Require this many consecutive offline reports before notifying
+
+# Minimum elapsed time (seconds) before confirming a server is offline.
+# Requires 2 independent (non-cached) offline responses from the API, plus a
+# worst-case timing offset between the monitor's check cycle and the API cache
+# refresh cycle:  2 × cache_duration + 1 × cache_duration = 3 × 120 s = 360 s.
+MIN_OFFLINE_DURATION = 2 * API_CACHE_DURATION + API_CACHE_DURATION
+
+# Dynamically calculate the number of consecutive offline checks needed so that
+# (OFFLINE_CONFIRM_CHECKS - 1) × CHECK_INTERVAL ≥ MIN_OFFLINE_DURATION.
+# This ensures the confirmation window spans enough time regardless of CHECK_INTERVAL.
+OFFLINE_CONFIRM_CHECKS = max(2, math.ceil(MIN_OFFLINE_DURATION / CHECK_INTERVAL) + 1)
 
 def load_previous_data():
     """Load previous server and player data from a file."""
@@ -302,10 +313,8 @@ if __name__ == "__main__":
     log(f"Starting Minecraft {SERVER_TYPE} Server Monitor...")
     log(f"Monitoring server: {MC_SERVER}")
     log(f"Check interval: {CHECK_INTERVAL} seconds")
-    
-    if CHECK_INTERVAL < API_CACHE_DURATION:
-        log(f"Warning: CHECK_INTERVAL ({CHECK_INTERVAL}s) is less than the API cache duration ({API_CACHE_DURATION}s). "
-            f"Consecutive checks may return the same cached response, reducing the reliability of offline detection.")
+    log(f"Offline confirmation: {OFFLINE_CONFIRM_CHECKS} consecutive checks "
+        f"(~{(OFFLINE_CONFIRM_CHECKS - 1) * CHECK_INTERVAL}s before confirming offline)")
     
     # Load the last known server and player data
     previous_online_count, previous_server_status, previous_gamemode, stored_server_type, previous_version, previous_player_names, previous_offline_checks = load_previous_data()
