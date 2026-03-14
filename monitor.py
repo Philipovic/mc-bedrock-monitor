@@ -38,6 +38,7 @@ CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "300"))  # Default: 5 minutes
 DATA_FILE = "/app/data/server_data.json"  # Fixed path for data storage
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 REQUEST_TIMEOUT = 10  # Timeout for API requests in seconds
+API_CACHE_DURATION = 120  # The mcsrvstat.us API caches responses for 2 minutes (120 seconds)
 OFFLINE_CONFIRM_CHECKS = 2  # Require this many consecutive offline reports before notifying
 
 def load_previous_data():
@@ -301,6 +302,10 @@ if __name__ == "__main__":
     log(f"Starting Minecraft {SERVER_TYPE} Server Monitor...")
     log(f"Monitoring server: {MC_SERVER}")
     log(f"Check interval: {CHECK_INTERVAL} seconds")
+    
+    if CHECK_INTERVAL < API_CACHE_DURATION:
+        log(f"Warning: CHECK_INTERVAL ({CHECK_INTERVAL}s) is less than the API cache duration ({API_CACHE_DURATION}s). "
+            f"Consecutive checks may return the same cached response, reducing the reliability of offline detection.")
     
     # Load the last known server and player data
     previous_online_count, previous_server_status, previous_gamemode, stored_server_type, previous_version, previous_player_names, previous_offline_checks = load_previous_data()

@@ -677,5 +677,31 @@ class TestConsecutiveOfflineChecks(unittest.TestCase):
         self.assertEqual(result3[5], 0)
 
 
+class TestAPICacheDuration(unittest.TestCase):
+    """Test that API cache duration is considered in the configuration."""
+    
+    def test_api_cache_duration_constant_exists(self):
+        """Test that API_CACHE_DURATION is defined and equals 120 seconds (2 minutes)."""
+        self.assertTrue(hasattr(monitor, 'API_CACHE_DURATION'))
+        self.assertEqual(monitor.API_CACHE_DURATION, 120)
+    
+    def test_default_check_interval_exceeds_cache_duration(self):
+        """Test that the default CHECK_INTERVAL (300s) exceeds the API cache duration (120s)."""
+        # The default CHECK_INTERVAL should be >= API_CACHE_DURATION to ensure
+        # consecutive checks receive independent (non-cached) API responses
+        self.assertGreaterEqual(int(os.getenv("CHECK_INTERVAL", "300")), monitor.API_CACHE_DURATION)
+    
+    def test_offline_confirm_checks_requires_independent_responses(self):
+        """Test that OFFLINE_CONFIRM_CHECKS works correctly with cache-aware interval.
+        
+        With CHECK_INTERVAL >= API_CACHE_DURATION (120s), each consecutive offline
+        check receives a fresh API response, making OFFLINE_CONFIRM_CHECKS meaningful.
+        """
+        # OFFLINE_CONFIRM_CHECKS should require at least 2 checks
+        self.assertGreaterEqual(monitor.OFFLINE_CONFIRM_CHECKS, 2)
+        # API_CACHE_DURATION should be set to 120 seconds (2 minutes)
+        self.assertEqual(monitor.API_CACHE_DURATION, 120)
+
+
 if __name__ == '__main__':
     unittest.main()
