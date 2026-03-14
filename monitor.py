@@ -1,5 +1,6 @@
 import os
 import sys
+import math
 import requests
 import time
 import json
@@ -38,6 +39,18 @@ CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "300"))  # Default: 5 minutes
 DATA_FILE = "/app/data/server_data.json"  # Fixed path for data storage
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 REQUEST_TIMEOUT = 10  # Timeout for API requests in seconds
+API_CACHE_DURATION = 120  # The mcsrvstat.us API caches responses for 2 minutes (120 seconds)
+
+# Minimum elapsed time (seconds) before confirming a server is offline.
+# Requires 2 independent (non-cached) offline responses from the API, plus a
+# worst-case timing offset between the monitor's check cycle and the API cache
+# refresh cycle:  2 × cache_duration + 1 × cache_duration = 3 × 120 s = 360 s.
+MIN_OFFLINE_DURATION = 2 * API_CACHE_DURATION + API_CACHE_DURATION
+
+# Dynamically calculate the number of consecutive offline checks needed so that
+# (OFFLINE_CONFIRM_CHECKS - 1) × CHECK_INTERVAL ≥ MIN_OFFLINE_DURATION.
+# This ensures the confirmation window spans enough time regardless of CHECK_INTERVAL.
+OFFLINE_CONFIRM_CHECKS = max(2, math.ceil(MIN_OFFLINE_DURATION / CHECK_INTERVAL) + 1)
 
 def load_previous_data():
     """Load previous server and player data from a file."""
@@ -50,14 +63,15 @@ def load_previous_data():
                 data.get("gamemode", ""),
                 data.get("server_type", SERVER_TYPE),
                 data.get("version", "Unknown"),
-                set(data.get("player_names", []))  # Load player names as a set
+                set(data.get("player_names", [])),  # Load player names as a set
+                data.get("offline_check_count", 0)
             )
     except FileNotFoundError:
-        return 0, None, "", SERVER_TYPE, "Unknown", set()  # Default values with current server type
+        return 0, None, "", SERVER_TYPE, "Unknown", set(), 0  # Default values with current server type
     except json.JSONDecodeError:
-        return 0, None, "", SERVER_TYPE, "Unknown", set()  # Default values with current server type
+        return 0, None, "", SERVER_TYPE, "Unknown", set(), 0  # Default values with current server type
 
-def save_current_data(online_count, server_status, gamemode, version, player_names=None):
+def save_current_data(online_count, server_status, gamemode, version, player_names=None, offline_check_count=0):
     """Save current server and player data to a file."""
     # Create data directory if it doesn't exist
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
@@ -66,7 +80,8 @@ def save_current_data(online_count, server_status, gamemode, version, player_nam
         "server_status": server_status,
         "gamemode": gamemode,
         "server_type": SERVER_TYPE,
-        "version": version
+        "version": version,
+        "offline_check_count": offline_check_count
     }
     # Save player names if provided (convert set to list for JSON serialization)
     if player_names is not None:
@@ -90,7 +105,7 @@ def send_discord_notification(message):
     except Exception as e:
         log(f"Error sending Discord notification: {e}")
 
-def check_server(previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names):
+def check_server(previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks=0):
     """Check the Minecraft server for status, player count, and server info."""
     
     try:
@@ -105,24 +120,24 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
     except requests.exceptions.ConnectionError as e:
         # Network is down, DNS failure, or API server unreachable
         log(f"API unreachable (connection error): {e}")
-        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
+        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks
     except requests.exceptions.Timeout as e:
         # Request timed out
         log(f"API unreachable (timeout): {e}")
-        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
+        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks
     except requests.exceptions.HTTPError as e:
         # Server returned an error status code
         status_code = e.response.status_code if e.response is not None else "unknown"
         log(f"API error (HTTP {status_code}): {e}")
-        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
+        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks
     except requests.exceptions.RequestException as e:
         # Any other request-related error
         log(f"API unreachable (request error): {e}")
-        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
+        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks
     except json.JSONDecodeError as e:
         # Invalid JSON response from API
         log(f"API returned invalid JSON: {e}")
-        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
+        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks
     
     server_online = data.get("online", False)
     online_count = data.get("players", {}).get("online", 0)
@@ -166,11 +181,16 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
 
     # Track if we need to save data
     data_changed = False
+    offline_check_count = previous_offline_checks
+
+    # Reset offline counter when server is online
+    if server_online:
+        offline_check_count = 0
     
     # Notify if the server status changes or it's the first check
     if server_online != previous_server_status or previous_server_status is None:
-        data_changed = True
         if server_online:
+            data_changed = True
             # Format version in parentheses on the same line as ONLINE message
             version_str = f" ({current_version})" if current_version and current_version != "Unknown" else ""
             message_parts = [f"✅ The server is now ONLINE!{version_str}"]
@@ -196,9 +216,19 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
             log(message)
             send_discord_notification(message)
         else:
-            message = "❌ The server is now OFFLINE."
-            log(message)
-            send_discord_notification(message)
+            offline_check_count += 1
+            if offline_check_count >= OFFLINE_CONFIRM_CHECKS:
+                data_changed = True
+                message = "❌ The server is now OFFLINE."
+                log(message)
+                send_discord_notification(message)
+            else:
+                # Not yet confirmed offline, save counter and preserve previous status
+                save_current_data(previous_online_count, previous_server_status,
+                                  previous_gamemode, previous_version,
+                                  previous_player_names, offline_check_count)
+                return (previous_online_count, previous_server_status, previous_gamemode,
+                        previous_version, previous_player_names, offline_check_count)
     
     # Notify if server version changes while online
     elif server_online and current_version != previous_version and current_version != "Unknown":
@@ -266,32 +296,35 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
     # Save the updated server status, player count, gamemode, version and player names only if data changed
     if data_changed:
         if server_online:  # Save gamemode, current version and player names only if the server is online
-            save_current_data(online_count, server_online, gamemode, current_version, current_player_names)
+            save_current_data(online_count, server_online, gamemode, current_version, current_player_names, offline_check_count)
         else:
-            save_current_data(online_count, server_online, previous_gamemode, previous_version, set())
+            save_current_data(online_count, server_online, previous_gamemode, previous_version, set(), offline_check_count)
 
     return (
         online_count,
         server_online,
         gamemode if server_online else previous_gamemode,
         current_version if server_online else previous_version,
-        current_player_names if server_online else set()
+        current_player_names if server_online else set(),
+        offline_check_count
     )
 
 if __name__ == "__main__":
     log(f"Starting Minecraft {SERVER_TYPE} Server Monitor...")
     log(f"Monitoring server: {MC_SERVER}")
     log(f"Check interval: {CHECK_INTERVAL} seconds")
+    log(f"Offline confirmation: {OFFLINE_CONFIRM_CHECKS} consecutive checks "
+        f"(~{(OFFLINE_CONFIRM_CHECKS - 1) * CHECK_INTERVAL}s before confirming offline)")
     
     # Load the last known server and player data
-    previous_online_count, previous_server_status, previous_gamemode, stored_server_type, previous_version, previous_player_names = load_previous_data()
+    previous_online_count, previous_server_status, previous_gamemode, stored_server_type, previous_version, previous_player_names, previous_offline_checks = load_previous_data()
     
     # Warn if server type has changed since last run
     if stored_server_type and stored_server_type != SERVER_TYPE:
         log(f"Warning: Server type has changed from {stored_server_type} to {SERVER_TYPE}")
 
     while True:
-        previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names = check_server(
-            previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names
+        previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks = check_server(
+            previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks
         )
         time.sleep(CHECK_INTERVAL)
