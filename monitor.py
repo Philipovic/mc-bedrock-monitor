@@ -130,13 +130,13 @@ def check_server(previous_online_count, previous_server_status, previous_gamemod
         status_code = e.response.status_code if e.response is not None else "unknown"
         log(f"API error (HTTP {status_code}): {e}")
         return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks
+    except (json.JSONDecodeError, requests.exceptions.JSONDecodeError) as e:
+        # Invalid JSON response from API (e.g. empty body)
+        log(f"API returned invalid JSON: {e}")
+        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks
     except requests.exceptions.RequestException as e:
         # Any other request-related error
         log(f"API unreachable (request error): {e}")
-        return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks
-    except json.JSONDecodeError as e:
-        # Invalid JSON response from API
-        log(f"API returned invalid JSON: {e}")
         return previous_online_count, previous_server_status, previous_gamemode, previous_version, previous_player_names, previous_offline_checks
     
     server_online = data.get("online", False)

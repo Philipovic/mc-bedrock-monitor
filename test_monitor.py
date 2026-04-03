@@ -294,6 +294,46 @@ class TestAPIFailureHandling(unittest.TestCase):
         self.mock_discord.assert_not_called()
     
     @patch('monitor.session')
+    def test_requests_json_decode_error_preserves_state(self, mock_session):
+        """Test that requests.exceptions.JSONDecodeError (empty response) preserves state.
+        
+        This covers the real-world scenario where response.json() raises
+        requests.exceptions.JSONDecodeError (a subclass of both json.JSONDecodeError
+        and requests.exceptions.RequestException) when the response body is empty.
+        """
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.side_effect = requests.exceptions.JSONDecodeError(
+            "Expecting value", "", 0
+        )
+        mock_session.get.return_value = mock_response
+        
+        with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
+            result = monitor.check_server(
+                self.initial_online_count,
+                self.initial_server_status,
+                self.initial_gamemode,
+                self.initial_version,
+                self.initial_player_names
+            )
+            output = mock_stdout.getvalue()
+        
+        # Verify state is unchanged
+        self.assertEqual(result[0], self.initial_online_count)
+        self.assertEqual(result[1], self.initial_server_status)
+        self.assertEqual(result[2], self.initial_gamemode)
+        self.assertEqual(result[3], self.initial_version)
+        self.assertEqual(result[4], self.initial_player_names)
+        
+        # Verify the correct error message is logged (not "API unreachable")
+        self.assertIn("API returned invalid JSON", output)
+        self.assertNotIn("API unreachable", output)
+        
+        # Verify no Discord notification was sent
+        self.mock_discord.assert_not_called()
+    
+    @patch('monitor.session')
     def test_multiple_api_failures_preserve_state(self, mock_session):
         """Test that multiple consecutive API failures preserve state."""
         # First call - connection error
